@@ -190,7 +190,9 @@ static void video_cb(const void* data, unsigned w, unsigned h, size_t pitch) {
                 }
             }
             // Android ARGB_8888 espera el entero 0xAARRGGBB.
-            dst[(size_t)y * w + x] = 0xFF000000u | (r << 16) | (g << 8) | b;
+            // FCEUmm entrega los canales rojo y azul en orden BGR para este formato.
+            // Intercambiarlos aquí produce el ARGB_8888 esperado por Android.
+            dst[(size_t)y * w + x] = 0xFF000000u | (b << 16) | (g << 8) | r;
         }
     }
     g_w = w;
