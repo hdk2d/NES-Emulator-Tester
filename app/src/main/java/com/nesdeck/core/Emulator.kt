@@ -93,7 +93,12 @@ class Emulator(
         try {
             if (!Native.ok) { fail("Falta el núcleo de emulación (libfceumm_core.so). Lee el README."); return }
             val core = File(ctx.applicationInfo.nativeLibraryDir, "libfceumm_core.so").absolutePath
-            loaded = Native.load(core, system.absolutePath, saves.absolutePath, prefs.romFile(game).readBytes(), video, audio)
+            val romFile = prefs.romFile(game)
+            if (!romFile.isFile || romFile.length() <= 16L) {
+                fail("El archivo ROM no existe o está incompleto.")
+                return
+            }
+            loaded = Native.load(core, system.absolutePath, saves.absolutePath, romFile.absolutePath, romFile.readBytes(), video, audio)
             if (!loaded) { fail("El núcleo no pudo cargar esta ROM."); return }
             if (srm.exists()) Native.setSram(srm.readBytes())
 
