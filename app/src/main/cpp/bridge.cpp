@@ -102,6 +102,32 @@ static bool resolve() {
            sym(retro_get_memory_size, "retro_get_memory_size");
 }
 
+static void close_library() {
+    if (g_lib) {
+        dlclose(g_lib);
+        g_lib = nullptr;
+    }
+    retro_set_environment = nullptr;
+    retro_set_video_refresh = nullptr;
+    retro_set_audio_sample = nullptr;
+    retro_set_audio_sample_batch = nullptr;
+    retro_set_input_poll = nullptr;
+    retro_set_input_state = nullptr;
+    retro_init = nullptr;
+    retro_get_system_info = nullptr;
+    retro_deinit = nullptr;
+    retro_load_game = nullptr;
+    retro_unload_game = nullptr;
+    retro_get_system_av_info = nullptr;
+    retro_run = nullptr;
+    retro_reset = nullptr;
+    retro_serialize_size = nullptr;
+    retro_serialize = nullptr;
+    retro_unserialize = nullptr;
+    retro_get_memory_data = nullptr;
+    retro_get_memory_size = nullptr;
+}
+
 // ---- Callbacks ----
 static void core_log(int, const char* fmt, ...) {
     va_list ap;
@@ -128,41 +154,60 @@ static bool env_cb(unsigned cmd, void* data) {
 }
 
 static void video_cb(const void* data, unsigned w, unsigned h, size_t pitch) {
-    if (!data || !g_vbuf || (size_t)w * h * 4 > g_vcap) return;   // data == null: fotograma repetido
-    g_w = w; g_h = h;
-    uint32_t* dst = reinterpret_cast<uint32_t*>(g_vbuf);          // salida: bytes R,G,B,A
-    for (unsigned y = 0; y < h; y++) {
-        const uint8_t* row = static_cast<const uint8_t*>(data) + y * pitch;
-        if (g_fmt == 1) {
-            const uint32_t* s = reinterpret_cast<const uint32_t*>(row);
-            for (unsigned x = 0; x < w; x++) {
-                uint32_t p = s[x];
-                *dst++ = 0xFF000000u | ((p & 0xFF) << 16) | (p & 0xFF00) | ((p >> 16) & 0xFF);
-            }
-        } else {
-            const uint16_t* s = reinterpret_cast<const uint16_t*>(row);
-            for (unsigned x = 0; x < w; x++) {
-                uint32_t p = s[x], r, g, b;
-                if (g_fmt == 2) {
+    // Libretro puede enviar nullptr para repetir el fotograma anterior.
+    if (!data || !g_vbuf || w == 0 || h == 0 || w > 512 || h > 480) return;
+    if ((size_t)w > g_vcap / 4 / (size_t)h) return;
+
+    const size_t bytes_per_pixel = (g_fmt == 1) ? 4u : 2u;
+    if (pitch < (size_t)w * bytes_per_pixel) return;
+
+    uint32_t* dst = reinterpret_cast<uint32_t*>(g_vbuf);
+    const uint8_t* src = static_cast<const uint8_t*>(data);
+    for (unsigned y = 0; y < h; ++y) {
+        const uint8_t* row = src + (size_t)y * pitch;
+        for (unsigned x = 0; x < w; ++x) {
+            uint32_t r, g, b;
+            if (g_fmt == 1) {
+                // XRGB8888 de libretro: 0x00RRGGBB.
+                uint32_t p;
+                memcpy(&p, row + (size_t)x * 4, sizeof(p));
+                r = (p >> 16) & 0xFF;
+                g = (p >> 8) & 0xFF;
+                b = p & 0xFF;
+            } else {
+                uint16_t p;
+                memcpy(&p, row + (size_t)x * 2, sizeof(p));
+                if (g_fmt == 2) { // RGB565
                     r = (p >> 11) & 31; g = (p >> 5) & 63; b = p & 31;
-                    r = (r << 3) | (r >> 2); g = (g << 2) | (g >> 4); b = (b << 3) | (b >> 2);
-                } else {
+                    r = (r << 3) | (r >> 2);
+                    g = (g << 2) | (g >> 4);
+                    b = (b << 3) | (b >> 2);
+                } else { // 0RGB1555
                     r = (p >> 10) & 31; g = (p >> 5) & 31; b = p & 31;
-                    r = (r << 3) | (r >> 2); g = (g << 3) | (g >> 2); b = (b << 3) | (b >> 2);
+                    r = (r << 3) | (r >> 2);
+                    g = (g << 3) | (g >> 2);
+                    b = (b << 3) | (b >> 2);
                 }
-                *dst++ = 0xFF000000u | (b << 16) | (g << 8) | r;
             }
+            // Android ARGB_8888 espera el entero 0xAARRGGBB.
+            dst[(size_t)y * w + x] = 0xFF000000u | (r << 16) | (g << 8) | b;
         }
     }
+    g_w = w;
+    g_h = h;
 }
 
 static size_t audio_batch_cb(const int16_t* data, size_t frames) {
-    if (!g_abuf) return frames;
-    size_t room = g_acap / 4 - g_aframes;
-    size_t n = frames < room ? frames : room;
-    memcpy(g_abuf + g_aframes * 4, data, n * 4);
-    g_aframes += n;
-    return frames;
+    if (frames == 0) return 0;
+    if (!data || !g_abuf) return 0;
+    const size_t capacity = g_acap / 4;
+    if (g_aframes >= capacity) return 0;
+    const size_t room = capacity - g_aframes;
+    const size_t accepted = frames < room ? frames : room;
+    if (accepted == 0) return 0;
+    memcpy(g_abuf + g_aframes * 4, data, accepted * 4);
+    g_aframes += accepted;
+    return accepted;
 }
 
 static void audio_cb(int16_t l, int16_t r) {
@@ -183,25 +228,56 @@ static int16_t state_cb(unsigned port, unsigned device, unsigned, unsigned id) {
 
 JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring jsave,
                     jbyteArray jrom, jobject jvideo, jobject jaudio) {
-    if (g_loaded) return JNI_FALSE;
+    if (g_loaded || g_lib || !jlib || !jsys || !jsave || !jrom || !jvideo || !jaudio)
+        return JNI_FALSE;
+
     const char* lib = env->GetStringUTFChars(jlib, nullptr);
+    if (!lib) return JNI_FALSE;
     g_lib = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
     if (!g_lib) LOG("dlopen(%s): %s", lib, dlerror());
     env->ReleaseStringUTFChars(jlib, lib);
-    if (!g_lib || !resolve()) return JNI_FALSE;
+    if (!g_lib) return JNI_FALSE;
+    if (!resolve()) {
+        close_library();
+        return JNI_FALSE;
+    }
 
-    const char* s = env->GetStringUTFChars(jsys, nullptr);  g_sys = s;  env->ReleaseStringUTFChars(jsys, s);
-    s = env->GetStringUTFChars(jsave, nullptr);             g_save = s; env->ReleaseStringUTFChars(jsave, s);
+    const char* s = env->GetStringUTFChars(jsys, nullptr);
+    if (!s) { close_library(); return JNI_FALSE; }
+    g_sys = s;
+    env->ReleaseStringUTFChars(jsys, s);
 
-    jsize n = env->GetArrayLength(jrom);
+    s = env->GetStringUTFChars(jsave, nullptr);
+    if (!s) { close_library(); return JNI_FALSE; }
+    g_save = s;
+    env->ReleaseStringUTFChars(jsave, s);
+
+    const jsize n = env->GetArrayLength(jrom);
+    if (n <= 0) { close_library(); return JNI_FALSE; }
     g_rom.assign((size_t)n, 0);
     env->GetByteArrayRegion(jrom, 0, n, reinterpret_cast<jbyte*>(g_rom.data()));
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        g_rom.clear();
+        close_library();
+        return JNI_FALSE;
+    }
 
     g_vbuf = static_cast<uint8_t*>(env->GetDirectBufferAddress(jvideo));
-    g_vcap = (size_t)env->GetDirectBufferCapacity(jvideo);
+    const jlong video_capacity = env->GetDirectBufferCapacity(jvideo);
     g_abuf = static_cast<uint8_t*>(env->GetDirectBufferAddress(jaudio));
-    g_acap = (size_t)env->GetDirectBufferCapacity(jaudio);
-    if (!g_vbuf || !g_abuf) return JNI_FALSE;
+    const jlong audio_capacity = env->GetDirectBufferCapacity(jaudio);
+    if (!g_vbuf || !g_abuf || video_capacity <= 0 || audio_capacity <= 0) {
+        g_vbuf = nullptr; g_abuf = nullptr; g_vcap = g_acap = 0;
+        g_rom.clear();
+        close_library();
+        return JNI_FALSE;
+    }
+    g_vcap = (size_t)video_capacity;
+    g_acap = (size_t)audio_capacity;
+    g_aframes = 0;
+    g_w = 256; g_h = 240;
+    g_fmt = 2;
 
     retro_set_environment(env_cb);
     retro_set_video_refresh(video_cb);
@@ -210,14 +286,21 @@ JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring js
     retro_set_input_poll(poll_cb);
     retro_set_input_state(state_cb);
     retro_init();
+
     retro_game_info info = {"game.nes", g_rom.data(), g_rom.size(), nullptr};
-    if (!retro_load_game(&info)) { retro_deinit(); return JNI_FALSE; }
+    if (!retro_load_game(&info)) {
+        retro_deinit();
+        g_vbuf = nullptr; g_abuf = nullptr; g_vcap = g_acap = 0;
+        g_rom.clear();
+        close_library();
+        return JNI_FALSE;
+    }
+
     memset(&g_av, 0, sizeof(g_av));
     retro_get_system_av_info(&g_av);
     g_loaded = true;
     return JNI_TRUE;
 }
-
 JNI(jdoubleArray, timing)(JNIEnv* env, jobject) {
     jdouble v[2] = {g_av.timing.fps, g_av.timing.sample_rate};
     jdoubleArray a = env->NewDoubleArray(2);
@@ -276,10 +359,17 @@ JNI(jboolean, loadState)(JNIEnv* env, jobject, jbyteArray data) {
 JNI(void, reset)(JNIEnv*, jobject) { if (g_loaded) retro_reset(); }
 
 JNI(void, unload)(JNIEnv*, jobject) {
-    if (!g_loaded) return;
-    retro_unload_game();
-    retro_deinit();
+    if (g_loaded) {
+        retro_unload_game();
+        retro_deinit();
+    }
     g_loaded = false;
     g_vbuf = nullptr;
     g_abuf = nullptr;
+    g_vcap = g_acap = g_aframes = 0;
+    g_rom.clear();
+    g_sys.clear();
+    g_save.clear();
+    memset(&g_av, 0, sizeof(g_av));
+    close_library();
 }
