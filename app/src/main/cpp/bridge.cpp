@@ -227,7 +227,7 @@ static int16_t state_cb(unsigned port, unsigned device, unsigned, unsigned id) {
 #define JNI(ret, name) extern "C" JNIEXPORT ret JNICALL Java_com_nesdeck_core_Native_##name
 
 JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring jsave,
-                    jbyteArray jrom, jobject jvideo, jobject jaudio) {
+                    jstring jrompath, jbyteArray jrom, jobject jvideo, jobject jaudio) {
     if (g_loaded || g_lib || !jlib || !jsys || !jsave || !jrom || !jvideo || !jaudio)
         return JNI_FALSE;
 
@@ -252,16 +252,35 @@ JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring js
     g_save = s;
     env->ReleaseStringUTFChars(jsave, s);
 
+    if (!jrompath || !jrom) { close_library(); return JNI_FALSE; }
+    const char* rom_path = env->GetStringUTFChars(jrompath, nullptr);
+    if (!rom_path) { close_library(); return JNI_FALSE; }
+
     const jsize n = env->GetArrayLength(jrom);
-    if (n <= 0) { close_library(); return JNI_FALSE; }
+    if (n <= 16) {
+        env->ReleaseStringUTFChars(jrompath, rom_path);
+        close_library();
+        return JNI_FALSE;
+    }
     g_rom.assign((size_t)n, 0);
     env->GetByteArrayRegion(jrom, 0, n, reinterpret_cast<jbyte*>(g_rom.data()));
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
+        env->ReleaseStringUTFChars(jrompath, rom_path);
         g_rom.clear();
         close_library();
         return JNI_FALSE;
     }
+
+    // Consultar la política real del núcleo. FCEUmm declara need_fullpath=true:
+    // necesita la ruta real de la ROM y no el nombre ficticio "game.nes".
+    retro_system_info core_info{};
+    retro_get_system_info(&core_info);
+    LOG("Core: %s %s, extensions=%s, need_fullpath=%d; ROM=%s (%d bytes)",
+        core_info.library_name ? core_info.library_name : "?",
+        core_info.library_version ? core_info.library_version : "?",
+        core_info.valid_extensions ? core_info.valid_extensions : "?",
+        core_info.need_fullpath ? 1 : 0, rom_path, n);
 
     g_vbuf = static_cast<uint8_t*>(env->GetDirectBufferAddress(jvideo));
     const jlong video_capacity = env->GetDirectBufferCapacity(jvideo);
@@ -287,8 +306,18 @@ JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring js
     retro_set_input_state(state_cb);
     retro_init();
 
-    retro_game_info info = {"game.nes", g_rom.data(), g_rom.size(), nullptr};
-    if (!retro_load_game(&info)) {
+    // Si el núcleo exige ruta completa, se le entrega la ruta real del archivo.
+    // Para núcleos que aceptan carga desde memoria, se entrega el contenido en data.
+    retro_game_info info = {
+        rom_path,
+        core_info.need_fullpath ? nullptr : g_rom.data(),
+        core_info.need_fullpath ? 0u : g_rom.size(),
+        nullptr
+    };
+    const bool game_ok = retro_load_game(&info);
+    env->ReleaseStringUTFChars(jrompath, rom_path);
+    if (!game_ok) {
+        LOG("retro_load_game rechazó la ROM; revisa ruta, formato y cabecera iNES.");
         retro_deinit();
         g_vbuf = nullptr; g_abuf = nullptr; g_vcap = g_acap = 0;
         g_rom.clear();
