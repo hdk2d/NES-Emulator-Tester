@@ -13,7 +13,7 @@ object Native {
         false
     }
 
-    external fun load(lib: String, sysDir: String, saveDir: String, rom: ByteArray, video: ByteBuffer, audio: ByteBuffer): Boolean
+    external fun load(lib: String, sysDir: String, saveDir: String, romPath: String, rom: ByteArray, video: ByteBuffer, audio: ByteBuffer): Boolean
     external fun timing(): DoubleArray                 // [fps, frecuencia de audio]
     external fun runFrame(buttons: Int, out: IntArray) // out = [frames de audio, ancho, alto]
     external fun getSram(): ByteArray?
