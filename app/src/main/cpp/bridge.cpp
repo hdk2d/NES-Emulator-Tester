@@ -190,13 +190,12 @@ JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring js
     if (!g_vbuf || !g_abuf) return JNI_FALSE;
 
     retro_set_environment(env_cb);
-    retro_init();
     retro_set_video_refresh(video_cb);
     retro_set_audio_sample(audio_cb);
     retro_set_audio_sample_batch(audio_batch_cb);
     retro_set_input_poll(poll_cb);
     retro_set_input_state(state_cb);
-
+    retro_init();
     retro_game_info info = {"game.nes", g_rom.data(), g_rom.size(), nullptr};
     if (!retro_load_game(&info)) { retro_deinit(); return JNI_FALSE; }
     memset(&g_av, 0, sizeof(g_av));
