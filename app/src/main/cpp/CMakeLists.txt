@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(nesbridge CXX)
+set(CMAKE_CXX_STANDARD 17)
+add_library(nesbridge SHARED bridge.cpp)
+target_link_libraries(nesbridge log)

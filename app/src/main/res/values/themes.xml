@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.NesDeck" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF2B2B2B</item>
+    </style>
+</resources>
