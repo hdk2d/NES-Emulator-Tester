@@ -30,7 +30,7 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
       - name: Compilar el núcleo de emulación (FCEUmm)
-        run: ./scripts/build_core.sh
+        run: bash ./scripts/build_core.sh
 
       - name: Configurar Gradle
         uses: gradle/actions/setup-gradle@v4
