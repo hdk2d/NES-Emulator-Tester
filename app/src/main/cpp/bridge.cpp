@@ -287,6 +287,7 @@ JNI(jboolean, load)(JNIEnv* env, jobject, jstring jlib, jstring jsys, jstring js
     g_abuf = static_cast<uint8_t*>(env->GetDirectBufferAddress(jaudio));
     const jlong audio_capacity = env->GetDirectBufferCapacity(jaudio);
     if (!g_vbuf || !g_abuf || video_capacity <= 0 || audio_capacity <= 0) {
+        env->ReleaseStringUTFChars(jrompath, rom_path);
         g_vbuf = nullptr; g_abuf = nullptr; g_vcap = g_acap = 0;
         g_rom.clear();
         close_library();
