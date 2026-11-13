@@ -13,7 +13,19 @@
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "NesBridge", __VA_ARGS__)
 
 // ---- Subconjunto mínimo de libretro.h ----
-struct retro_game_info { const char* path; const void* data; size_t size; const char* meta; };
+struct retro_game_info {
+    const char* path;
+    const void* data;
+    size_t size;
+    const char* meta;
+};
+struct retro_system_info {
+    const char* library_name;
+    const char* library_version;
+    const char* valid_extensions;
+    bool need_fullpath;
+    bool block_extract;
+};
 struct retro_game_geometry { unsigned base_width, base_height, max_width, max_height; float aspect_ratio; };
 struct retro_system_timing { double fps; double sample_rate; };
 struct retro_system_av_info { retro_game_geometry geometry; retro_system_timing timing; };
@@ -34,6 +46,7 @@ static void (*retro_set_audio_sample_batch)(retro_audio_sample_batch_t);
 static void (*retro_set_input_poll)(retro_input_poll_t);
 static void (*retro_set_input_state)(retro_input_state_t);
 static void (*retro_init)(void);
+static void (*retro_get_system_info)(retro_system_info*);
 static void (*retro_deinit)(void);
 static bool (*retro_load_game)(const retro_game_info*);
 static void (*retro_unload_game)(void);
@@ -74,6 +87,7 @@ static bool resolve() {
            sym(retro_set_audio_sample_batch, "retro_set_audio_sample_batch") &&
            sym(retro_set_input_poll, "retro_set_input_poll") &&
            sym(retro_set_input_state, "retro_set_input_state") &&
+           sym(retro_get_system_info, "retro_get_system_info") &&
            sym(retro_init, "retro_init") &&
            sym(retro_deinit, "retro_deinit") &&
            sym(retro_load_game, "retro_load_game") &&
